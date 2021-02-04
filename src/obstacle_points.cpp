@@ -37,7 +37,7 @@ ObstaclePoints::ObstaclePoints(ros::NodeHandle& nh, tf2_ros::Buffer& tf_buffer) 
         &ObstaclePoints::range_callback, this);
     scan_sub = nh.subscribe("/scan", 1,
         &ObstaclePoints::scan_callback, this);
-    
+
     nh.param<std::string>("base_frame", baseFrame, "base_link");
 }
 
@@ -46,7 +46,7 @@ void ObstaclePoints::range_callback(const sensor_msgs::Range::ConstPtr &msg) {
     ROS_DEBUG("Callback %s %f", frame.c_str(), msg->range);
 
     const std::lock_guard<std::mutex> lock(points_mutex);
-    
+
     // create sensor object if this is a new sensor
     std::map<std::string,RangeSensor>::iterator it = sensors.find(frame);
     if (it == sensors.end()) {
@@ -108,8 +108,8 @@ void ObstaclePoints::scan_callback(const sensor_msgs::LaserScan::ConstPtr &msg)
 {
     float theta = msg->angle_min;
     float increment = msg->angle_increment;
-    float range_min = msg->range_min;
-    
+    size_t array_size = (msg->ranges).size();
+
     const std::lock_guard<std::mutex> lock(points_mutex);
     lidar_stamp = msg->header.stamp;
 
@@ -139,6 +139,18 @@ void ObstaclePoints::scan_callback(const sensor_msgs::LaserScan::ConstPtr &msg)
             fromMsg(base_normal.vector, lidar_normal);
 
             have_lidar = true;
+
+            // Sine / Cosine Look Up Tables
+            cosLUT.reserve(array_size);
+            sinLUT.reserve(array_size);
+            double angle = msg->angle_min;
+            for (unsigned int i = 0 ; i < array_size ; i++) {
+                double cosine = std::cos(angle);
+                double sine = std::sin(angle);
+                cosLUT.push_back(std::move(cosine));
+                sinLUT.push_back(std::move(sine));
+                angle += increment;
+            }
         }
         catch (tf2::TransformException &ex) {
             ROS_WARN("%s", ex.what());
@@ -147,34 +159,32 @@ void ObstaclePoints::scan_callback(const sensor_msgs::LaserScan::ConstPtr &msg)
     }
 
     lidar_points.clear();
+    lidar_points.reserve(array_size);
     for (const auto& r : msg->ranges) {
-        theta += increment;
-
-        // ignore bogus samples
-        if (std::isnan(r) || r < range_min) {
-            continue;
-        }
-
         lidar_points.push_back(PolarLine(r, theta));
+        theta += increment;
     }
 }
-  
-std::vector<tf2::Vector3> ObstaclePoints::get_points(ros::Duration max_age) {
+
+std::vector<tf2::Vector3> ObstaclePoints::get_points(ros::Duration max_age, const float range_min) {
     ros::Time now = ros::Time::now();
     std::vector<tf2::Vector3> points;
 
     const std::lock_guard<std::mutex> lock(points_mutex);
+    points.reserve(lidar_points.size());
     ros::Duration lidar_age = now - lidar_stamp;
     if (lidar_age < max_age) {
-	for (const auto& p : lidar_points) {
-	    float sin_theta = std::sin(p.theta);
-	    float cos_theta = std::cos(p.theta);
+	for (unsigned int i = 0 ; i < lidar_points.size() ; i++) {
+            float radius = lidar_points[i].radius;
 
-	    float x = lidar_origin.x() + p.radius * (lidar_normal.x() * cos_theta -
-		 lidar_normal.y() * sin_theta);
+            // ignore bogus samples
+            if (std::isnan(radius) || std::isinf(radius) || radius < range_min) continue;
 
-	    float y = lidar_origin.y() + p.radius * (lidar_normal.y() * cos_theta +
-		 lidar_normal.x() * sin_theta);
+	    float x = lidar_origin.x() + radius * (lidar_normal.x() * cosLUT[i] -
+		 lidar_normal.y() * sinLUT[i]);
+
+	    float y = lidar_origin.y() + radius * (lidar_normal.y() * cosLUT[i] +
+		 lidar_normal.x() * sinLUT[i]);
 
 	    points.push_back(tf2::Vector3(x, y, 0));
 	}
@@ -198,15 +208,13 @@ std::vector<tf2::Vector3> ObstaclePoints::get_points(ros::Duration max_age) {
 
 std::vector<ObstaclePoints::Line> ObstaclePoints::get_lines(ros::Duration max_age) {
     ros::Time now = ros::Time::now();
-    
+
     const std::lock_guard<std::mutex> lock(points_mutex);
     std::vector<ObstaclePoints::Line> lines;
     for (const auto& kv : sensors) {
         const RangeSensor& sensor = kv.second;
 	ros::Duration age = now - sensor.stamp;
-	if (age < max_age) {
-	    lines.emplace_back(sensor.left_vertex, sensor.right_vertex);
-	}
+	if (age < max_age) lines.emplace_back(sensor.left_vertex, sensor.right_vertex);
     }
 
     return lines;
@@ -247,4 +255,3 @@ ObstaclePoints::PolarLine::PolarLine(float radius, float theta)
     this->radius = radius;
     this->theta = theta;
 }
-

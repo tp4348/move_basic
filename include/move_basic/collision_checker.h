@@ -57,6 +57,7 @@ class CollisionChecker
    float front_diag, back_diag;
 
    float max_age;
+   float range_min;
    float no_obstacle_dist;
    std::mutex obstacle_mutex;
 
@@ -73,7 +74,7 @@ class CollisionChecker
    float degrees(float radians) const;
 
 public:
-   // Note that we take in refrences to tf_buffer and op, we expect these to outlive 
+   // Note that we take in refrences to tf_buffer and op, we expect these to outlive
    // the useful life of this class, if they don't then you have a big issue.
    //
    // We don't store the NodeHandle, so that doesn't apply to it.
@@ -85,7 +86,7 @@ public:
 
    // return distance in radians to closest obstacle
    float obstacle_angle(bool left);
-   
+
    float obstacle_arc_angle(double linear, double angular);
 
    double min_side_dist;
@@ -93,4 +94,3 @@ public:
 };
 
 #endif
-
