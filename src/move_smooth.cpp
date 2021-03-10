@@ -80,10 +80,13 @@ class MoveBasic {
     std::string baseFrame;
 
     double maxAngularVelocity;
+    double minAngularVelocity;
     double maxAngularAcceleration;
     double maxLinearVelocity;
+    double minLinearVelocity;
     double maxLinearAcceleration;
     double angleTolerance;
+    double linearTolerance;
 
     double maxIncline;
     double gravityConstant;
@@ -185,10 +188,13 @@ MoveBasic::MoveBasic(): tfBuffer(ros::Duration(3.0)),
 {
     ros::NodeHandle nh("~");
     nh.param<double>("max_angular_velocity", maxAngularVelocity, 2.0);
+    nh.param<double>("min_angular_velocity", minAngularVelocity, 0.1);
     nh.param<double>("angular_acceleration", maxAngularAcceleration, 5.0);
     nh.param<double>("max_linear_velocity", maxLinearVelocity, 0.5);
+    nh.param<double>("min_linear_velocity", minLinearVelocity, 0.1);
     nh.param<double>("linear_acceleration", maxLinearAcceleration, 1.1);
     nh.param<double>("angular_tolerance", angleTolerance, 0.1);
+    nh.param<double>("angular_tolerance", linearTolerance, 0.1);
 
     // Parameters for turn PID
     nh.param<double>("lateral_kp", lateralKp, 0.5);
@@ -196,7 +202,7 @@ MoveBasic::MoveBasic(): tfBuffer(ros::Duration(3.0)),
     nh.param<double>("lateral_kd", lateralKd, 3.0);
 
     // To prevent sliping and tipping over when turning
-    nh.param<double>("max_incline_without_slipping", maxIncline, 0.01);
+    nh.param<double>("max_incline_without_slipping", maxIncline, 0.1);
 
     // Maximum lateral deviation from the path
     nh.param<double>("max_lateral_deviation", maxLateralDev, 1.0);
@@ -292,9 +298,14 @@ bool MoveBasic::transformPose(const std::string& from, const std::string& to,
 
 void MoveBasic::dynamicReconfigCallback(move_smooth::MovesmoothConfig& config, uint32_t){
     maxAngularVelocity = config.max_angular_velocity;
+    minAngularVelocity = config.min_angular_velocity;
     maxAngularAcceleration = config.max_angular_acceleration;
     maxLinearVelocity = config.max_linear_velocity;
+    minLinearVelocity = config.min_linear_velocity;
     maxLinearAcceleration = config.max_linear_acceleration;
+    maxIncline = config.max_incline_without_slipping;
+    angleTolerance = config.angular_tolerance;
+    linearTolerance = config.linear_tolerance;
     lateralKp = config.lateral_kp;
     lateralKi = config.lateral_ki;
     lateralKd = config.lateral_kd;
@@ -425,8 +436,7 @@ void MoveBasic::executeAction(const move_base_msgs::MoveBaseGoalConstPtr& msg)
     double requestedDistance = sqrt(linear.x() * linear.x() + linear.y() * linear.y());
 
     // Send control commands
-    double minRequestedDistance = maxLateralDev;
-    if (requestedDistance > minRequestedDistance) {
+    if (requestedDistance > linearTolerance) {
         if (!smoothFollow(drivingFrame, goalInDriving))
             return;
     }
@@ -490,7 +500,6 @@ bool MoveBasic::rotate(double& finalOrientation,
 {
     normalizeAngle(finalOrientation);
     double previousAngleRemaining = 0.0;
-    double previousAngularVelocity = 0.0;
     int oscillations = 0;
 
     bool done = false;
@@ -502,7 +511,7 @@ bool MoveBasic::rotate(double& finalOrientation,
 
         tf2::Transform poseDriving;
         if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
-             ROS_WARN("MoveSmooth: Cannot determine robot pose for driving");
+             abortGoal("MoveSmooth: Cannot determine robot pose for driving");
              return false;
         }
 
@@ -516,15 +525,17 @@ bool MoveBasic::rotate(double& finalOrientation,
 
         if (sign(previousAngleRemaining) != sign(angleRemaining))
             oscillations++;
+        previousAngleRemaining = angleRemaining;
 
         if (std::abs(angleRemaining) < angleTolerance || oscillations > 2) {
             sendCmd(0, 0);
             ROS_INFO("MoveSmooth: ORIENTATION ERROR ~ yaw: %f degrees", rad2deg(angleRemaining));
             ROS_INFO("MoveSmooth: Goal reached");
-            done = true;
+            return true;
         }
 
-        double angularVelocity = limitAngularVelocity(std::sqrt(previousAngularVelocity + 2.0 * maxAngularAcceleration * obstacleAngle));
+        double angularVelocity = limitAngularVelocity(std::max(minAngularVelocity,
+                                            std::sqrt(2.0 * maxAngularAcceleration * obstacleAngle)));
 
         if (actionServer->isNewGoalAvailable()) {
             angularVelocity = 0;
@@ -537,9 +548,6 @@ bool MoveBasic::rotate(double& finalOrientation,
             actionServer->setPreempted();
             return false;
         }
-
-        previousAngleRemaining = angleRemaining;
-        previousAngularVelocity = angularVelocity;
 
         bool counterwise = (angleRemaining < 0.0);
         if (counterwise) {
@@ -574,10 +582,6 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
     ros::Duration runawayTimeout(runawayTimeoutSecs);
     double prevDistanceRemaining = requestedDistance;
 
-    // De/Acceleration constraint
-    double previousLinearVelocity = 0.0;
-    double previousAngularVelocity = 0.0;
-
     // Lateral control
     double angleRemaining = 0.0;
     double lateralIntegral = 0.0;
@@ -594,7 +598,7 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
 
         tf2::Transform poseDriving;
         if (!getTransform(drivingFrame, baseFrame, poseDriving)) {
-             ROS_WARN("MoveSmooth: Cannot determine robot pose for driving");
+             abortGoal("MoveSmooth: Cannot determine robot pose for driving");
              return false;
         }
 
@@ -652,7 +656,7 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
 
         /* Finish Check */
 
-        if (distRemaining < maxLateralDev) {
+        if (distRemaining < linearTolerance) {
             if (actionServer->isNewGoalAvailable()) { // If next goal available keep up with velocity
                 ROS_INFO("MoveSmooth: Intermitent goal reached - ERROR: x: %f meters, y: %f meters",
                         remaining.x(), remaining.y());
@@ -666,13 +670,10 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
         }
 
         // Linear control
-        double maxAngleDev = std::atan2(maxLateralDev, 1.0); // Nominal
-        // constrain linear velocity according to maximum angular deviation from path - maxAngleDev[0,PI/2]; angleRemaining[0,PI]
-        double angularDevVelocity = std::max((maxAngleDev - (std::abs(angleRemaining) / 2)) / maxAngleDev, 0.0) * maxLinearVelocity;
-        double linearAccelerationConstraint = std::sqrt(previousLinearVelocity + 2.0 * maxLinearAcceleration *
-                                                                            std::min(obstacleDist, distRemaining));
+        double linearAccelerationConstraint = std::sqrt(2.0 * maxLinearAcceleration *
+                                                              std::min(obstacleDist, distRemaining));
         double proportionalControl = distRemaining;
-        double linearVelocity = limitLinearVelocity(std::min(angularDevVelocity,
+        double linearVelocity = limitLinearVelocity(std::max(minLinearVelocity,
                     std::min(proportionalControl, linearAccelerationConstraint)));
 
         // Lateral control
@@ -681,7 +682,7 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
         prevLateralError = lateralError;
         lateralIntegral += lateralError;
         double pidAngularVelocity = (lateralKp * lateralError) + (lateralKi * lateralIntegral) + (lateralKd * lateralDiff);
-        double angularAccelerationConstraint = std::sqrt(previousAngularVelocity + 2.0 * maxAngularAcceleration * obstacleAngle);
+        double angularAccelerationConstraint = std::sqrt(2.0 * maxAngularAcceleration * obstacleAngle);
         double angularVelocity = limitAngularVelocity(std::min(pidAngularVelocity, angularAccelerationConstraint));
 
         // Next goal state
@@ -713,9 +714,6 @@ bool MoveBasic::smoothFollow(const std::string& drivingFrame,
             double nextGoalVelocity = distanceToNextGoal;
             linearVelocity = limitLinearVelocity(std::min(nextGoalVelocity, std::max(linearVelocity, maxTurnVelocity)));
         }
-
-        previousLinearVelocity = linearVelocity;
-        previousAngularVelocity = angularVelocity;
 
         sendCmd(angularVelocity, linearVelocity);
     }
