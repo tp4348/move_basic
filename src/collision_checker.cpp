@@ -69,7 +69,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <sensor_msgs/Range.h>
 #include <visualization_msgs/Marker.h>
-#include "move_basic/collision_checker.h"
+#include "move_smooth/collision_checker.h"
 
 
 CollisionChecker::CollisionChecker(ros::NodeHandle& nh, tf2_ros::Buffer &tf_buffer, 

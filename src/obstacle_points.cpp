@@ -29,7 +29,7 @@
  *
  */
 
-#include "move_basic/obstacle_points.h"
+#include "move_smooth/obstacle_points.h"
 #include <sensor_msgs/Range.h>
 
 ObstaclePoints::ObstaclePoints(ros::NodeHandle& nh, tf2_ros::Buffer& tf_buffer) : tf_buffer(tf_buffer) {

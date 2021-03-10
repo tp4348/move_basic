@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>move_basic</name>
+  <name>move_smooth</name>
   <version>0.3.2</version>
   <description>Simple navigation package</description>
 
@@ -21,10 +21,11 @@
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>dynamic_reconfigure</depend>
+  <depend>message_generation</depend>
+  <depend>message_runtime</depend>
   <depend>std_msgs</depend>
   <depend>nav_core</depend>
   <depend>actionlib</depend>
   <depend>actionlib_msgs</depend>
   <depend>move_base_msgs</depend>
 </package>
-

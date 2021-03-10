@@ -98,5 +98,5 @@ private:
 }  // namespace actionlib
 
 // include the implementation here
-#include <move_basic/queued_action_server_imp.h>
+#include <move_smooth/queued_action_server_imp.h>
 #endif

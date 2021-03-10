@@ -1,3 +1,0 @@
-<launch>
-	<test test-name="goal_queueing_test" pkg="move_basic" type="goal_queueing_test" />
-</launch>

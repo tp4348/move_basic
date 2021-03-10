@@ -39,7 +39,7 @@
 
 #include <mutex>
 
-#include "move_basic/obstacle_points.h"
+#include "move_smooth/obstacle_points.h"
 
 class CollisionChecker
 {

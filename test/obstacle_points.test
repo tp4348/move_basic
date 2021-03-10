@@ -1,3 +1,0 @@
-<launch>
-  <test test-name="obstacle_points_test" pkg="move_basic" type="obstacle_points_test"/>
-</launch>
